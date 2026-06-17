@@ -39,15 +39,53 @@ GitHub App, который ревьюит pull request'ы (OpenAI или Anthrop
 - `AUTO_REVIEW_ON_REQUEST`, `AUTO_REVIEW_ON_OPEN`.
 - `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` — личность коммитов с правками.
 
-## Локальный запуск
+## Локальный запуск (быстрый старт для теста)
 
-```bash
+Нужны: Python 3.12+, Node.js (для туннеля), заполненный `.env`.
+
+**1. Установить зависимости** (один раз):
+
+```powershell
+# полный вариант (с code-review-graph для контекста графа)
 pip install -e .
-uvicorn app.main:app --reload --port 8000
+
+# или минимальный рантайм, если code-review-graph не ставится:
+pip install "fastapi>=0.115" "uvicorn[standard]>=0.30" "httpx>=0.27" `
+            "openai>=1.50" "anthropic>=0.40" "pyjwt[crypto]>=2.9" "pydantic-settings>=2.5"
 ```
 
-Webhook GitHub'а должен указывать на `https://<host>/webhook`.
-Healthcheck — `GET /healthz`.
+**2. Поднять сервер** (терминал №1, оставить открытым):
+
+```powershell
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Проверка: `curl http://localhost:8000/healthz` → `{"status":"ok"}`.
+
+**3. Поднять публичный туннель** (терминал №2, оставить открытым):
+
+```powershell
+npx --yes localtunnel --port 8000 --subdomain graphy-reviewer-bot
+```
+
+Выведет: `your url is: https://graphy-reviewer-bot.loca.lt`.
+Если этот subdomain занят — localtunnel выдаст случайный, тогда **обнови Webhook URL в GitHub**.
+
+**4. Прописать вебхук** в GitHub App → General → Webhook (один раз, если URL не менялся):
+
+- **Payload URL:** `https://graphy-reviewer-bot.loca.lt/webhook`
+- **Content type:** `application/json`
+- **Secret:** значение из `.env` → `GITHUB_WEBHOOK_SECRET`
+
+**5. Запустить ревью:** в PR назначить бота ревьюером или написать `/review`.
+
+> Сервер и туннель должны быть запущены, пока пользуешься ботом. Для постоянной
+> работы без локального ПК — задеплой на Railway (`railway.toml` уже в проекте),
+> переменные из `.env` задаются в панели Railway.
+
+**Если бот не отвечает** — проверь GitHub App → Advanced → **Recent Deliveries**:
+там видно, ушло ли событие и какой код ответа (401 = не совпал Secret,
+таймаут = сервер/туннель недоступен).
 
 ## Настройка GitHub App
 
