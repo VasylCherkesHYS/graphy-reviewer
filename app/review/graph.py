@@ -5,7 +5,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_FALLBACK = "(граф коду недоступний — аналізуй тільки diff)"
+FALLBACK = "(граф коду недоступний — аналізуй тільки diff)"
 
 
 def ensure_graph(repo_dir: str) -> bool:
@@ -42,7 +42,7 @@ def detect_changes(repo_dir: str, base_sha: str) -> str:
             timeout=settings.graph_timeout,
         )
         output = result.stdout.strip()
-        return output if output else _FALLBACK
+        return output if output else FALLBACK
     except Exception as e:
         logger.warning("code-review-graph detect-changes failed: %s", e)
-        return _FALLBACK
+        return FALLBACK

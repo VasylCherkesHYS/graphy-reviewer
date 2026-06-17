@@ -1,9 +1,11 @@
 import logging
+from collections.abc import Awaitable, Callable
 
 from app.config import settings
 from app.github import client as gh
 from app.github.auth import get_installation_token
-from app.review import clone, graph, poster, reviewer
+from app.github.payload import RepoCtx, head_target
+from app.review import applier, clone, fix_service, graph, poster, reviewer
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,10 @@ def _is_duplicate(delivery_id: str) -> bool:
     return False
 
 
+def _is_bot(actor: dict) -> bool:
+    return actor.get("type") == "Bot" or "[bot]" in actor.get("login", "")
+
+
 async def handle_event(event: str, payload: dict, delivery_id: str) -> None:
     if _is_duplicate(delivery_id):
         logger.info("Duplicate delivery %s, skipping", delivery_id)
@@ -30,34 +36,41 @@ async def handle_event(event: str, payload: dict, delivery_id: str) -> None:
 
     if event == "pull_request":
         action = payload.get("action", "")
-        if action in ("opened", "synchronize", "reopened"):
-            await _handle_pr_opened(payload)
+        if action == "review_requested" and settings.auto_review_on_request:
+            if _is_bot(payload.get("requested_reviewer", {})):
+                await _handle_pr_review(payload)
+        elif action in ("opened", "synchronize", "reopened") and settings.auto_review_on_open:
+            await _handle_pr_review(payload)
+
+    elif event == "issue_comment":
+        if payload.get("action") == "created":
+            await _handle_issue_comment(payload)
 
     elif event == "pull_request_review_comment":
-        action = payload.get("action", "")
-        if action == "created":
+        if payload.get("action") == "created":
             await _handle_review_comment(payload)
 
 
-async def _handle_pr_opened(payload: dict) -> None:
-    installation_id: int = payload["installation"]["id"]
-    repo_data = payload["repository"]
-    owner: str = repo_data["owner"]["login"]
-    repo: str = repo_data["name"]
+# --------------------------------------------------------------------------- #
+# Review
+# --------------------------------------------------------------------------- #
+
+async def _handle_pr_review(payload: dict) -> None:
+    ctx = RepoCtx.from_payload(payload)
     pr = payload["pull_request"]
-    pr_number: int = pr["number"]
-    base_sha: str = pr["base"]["sha"]
-    head_sha: str = pr["head"]["sha"]
+    token = await get_installation_token(ctx.installation_id)
+    await _run_review(token, ctx.owner, ctx.repo, pr["number"], pr["base"]["sha"], pr["head"]["sha"])
 
+
+async def _run_review(
+    token: str, owner: str, repo: str, pr_number: int, base_sha: str, head_sha: str
+) -> None:
     logger.info("PR review started: %s/%s#%d", owner, repo, pr_number)
-
-    token = await get_installation_token(installation_id)
 
     diff = await gh.get_pr_diff(token, owner, repo, pr_number)
 
-    # Clone repo and build graph
     tmp = None
-    graph_context = "(граф коду недоступний — аналізуй тільки diff)"
+    graph_context = graph.FALLBACK
     try:
         ref = f"refs/pull/{pr_number}/head"
         tmp = clone.clone_repo(token, owner, repo, ref, base_sha, depth=settings.clone_depth)
@@ -74,48 +87,257 @@ async def _handle_pr_opened(payload: dict) -> None:
     logger.info("PR review done: %s/%s#%d findings=%d", owner, repo, pr_number, len(result.findings))
 
 
-async def _handle_review_comment(payload: dict) -> None:
-    comment = payload["comment"]
-    sender = payload["sender"]
+# --------------------------------------------------------------------------- #
+# PR conversation commands (/review, /apply-all, /cleanup, /help)
+# --------------------------------------------------------------------------- #
 
-    # Skip bot replies to avoid infinite loops
-    if sender.get("type") == "Bot" or "[bot]" in sender.get("login", ""):
+_HELP_TEXT = (
+    "🤖 **AI Code Review — команды**\n\n"
+    "- `/review` — провести (или повторить) ревью PR.\n"
+    "- `/apply` — _ответом в треде конкретного замечания_: применить предложенную правку, "
+    "закоммитить и запушить в ветку PR (замечание после этого закрывается).\n"
+    "- `/apply-all` — применить все мои замечания (каждое — отдельным коммитом).\n"
+    "- `/cleanup` — удалить все мои комментарии в этом PR.\n"
+    "- Любой другой ответ в треде моего замечания — продолжение обсуждения.\n\n"
+    "💡 У замечаний с блоком _suggestion_ можно нажать **«Commit suggestion»** прямо в GitHub."
+)
+
+
+async def _cmd_review(token: str, ctx: RepoCtx, pr_number: int) -> None:
+    pr = await gh.get_pull_request(token, ctx.owner, ctx.repo, pr_number)
+    await _run_review(token, ctx.owner, ctx.repo, pr_number, pr["base"]["sha"], pr["head"]["sha"])
+
+
+async def _cmd_help(token: str, ctx: RepoCtx, pr_number: int) -> None:
+    await gh.create_issue_comment(token, ctx.owner, ctx.repo, pr_number, _HELP_TEXT)
+
+
+# prefix(es) -> handler. Order matters: first match wins.
+_COMMANDS: list[tuple[tuple[str, ...], Callable[[str, RepoCtx, int], Awaitable[None]]]] = [
+    (("/review",), _cmd_review),
+    (("/apply-all", "/apply all"), lambda t, c, n: _apply_all(t, c, n)),
+    (("/cleanup", "/clear"), lambda t, c, n: _cleanup(t, c, n)),
+    (("/help",), _cmd_help),
+]
+
+
+def _match_command(command: str):
+    for prefixes, handler in _COMMANDS:
+        if any(command.startswith(p) for p in prefixes):
+            return handler
+    return None
+
+
+async def _handle_issue_comment(payload: dict) -> None:
+    issue = payload.get("issue", {})
+    if "pull_request" not in issue:
+        return  # comment on a plain issue, not a PR
+    if _is_bot(payload.get("sender", {})):
         return
 
-    # Only react to replies in a thread (not top-level comments)
+    command = payload["comment"]["body"].strip().lower()
+    handler = _match_command(command)
+    if handler is None:
+        return
+
+    ctx = RepoCtx.from_payload(payload)
+    pr_number: int = issue["number"]
+    token = await get_installation_token(ctx.installation_id)
+    await gh.add_reaction_to_comment(token, ctx.owner, ctx.repo, payload["comment"]["id"], "eyes")
+    await handler(token, ctx, pr_number)
+
+
+async def _cleanup(token: str, ctx: RepoCtx, pr_number: int) -> None:
+    owner, repo = ctx.owner, ctx.repo
+    deleted = 0
+    try:
+        for c in await gh.list_review_comments(token, owner, repo, pr_number):
+            if _is_bot(c.get("user", {})):
+                try:
+                    await gh.delete_review_comment(token, owner, repo, c["id"])
+                    deleted += 1
+                except Exception:
+                    pass
+        for c in await gh.list_issue_comments(token, owner, repo, pr_number):
+            if _is_bot(c.get("user", {})):
+                try:
+                    await gh.delete_issue_comment(token, owner, repo, c["id"])
+                    deleted += 1
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning("cleanup failed: %s", e)
+
+    await gh.create_issue_comment(token, owner, repo, pr_number, f"🧹 Удалил {deleted} своих комментариев.")
+    logger.info("cleanup done: deleted %d comments on %s#%d", deleted, repo, pr_number)
+
+
+# --------------------------------------------------------------------------- #
+# Inline review-comment commands & dialog
+# --------------------------------------------------------------------------- #
+
+async def _handle_review_comment(payload: dict) -> None:
+    comment = payload["comment"]
+    if _is_bot(payload["sender"]):
+        return
+
+    body: str = comment.get("body", "").strip()
+    if body.lower().startswith("/apply"):
+        await _apply_one(payload)
+        return
+
+    # Otherwise: dialog. Only reply to threads on our own comments.
     in_reply_to_id: int | None = comment.get("in_reply_to_id")
     if not in_reply_to_id:
         return
 
-    installation_id: int = payload["installation"]["id"]
-    repo_data = payload["repository"]
-    owner: str = repo_data["owner"]["login"]
-    repo: str = repo_data["name"]
+    ctx = RepoCtx.from_payload(payload)
     pr_number: int = payload["pull_request"]["number"]
+    token = await get_installation_token(ctx.installation_id)
 
-    token = await get_installation_token(installation_id)
-
-    # Fetch the original bot comment
     try:
-        original = await gh.get_review_comment(token, owner, repo, in_reply_to_id)
+        original = await gh.get_review_comment(token, ctx.owner, ctx.repo, in_reply_to_id)
     except Exception as e:
         logger.warning("Could not fetch parent comment %d: %s", in_reply_to_id, e)
         return
 
-    # Only reply if the parent comment was posted by our bot
-    if original.get("user", {}).get("type") != "Bot":
+    if not _is_bot(original.get("user", {})):
         return
-
-    diff_hunk: str = comment.get("diff_hunk", "")
-    file_path: str = comment.get("path", "")
-    user_reply: str = comment.get("body", "")
 
     reply_text = await reviewer.reply_to_comment(
         original_comment=original["body"],
-        diff_hunk=diff_hunk,
-        file_path=file_path,
-        user_reply=user_reply,
+        diff_hunk=comment.get("diff_hunk", ""),
+        file_path=comment.get("path", ""),
+        user_reply=body,
     )
-
-    await gh.reply_to_review_comment(token, owner, repo, pr_number, comment["id"], reply_text)
+    await gh.reply_to_review_comment(token, ctx.owner, ctx.repo, pr_number, comment["id"], reply_text)
     logger.info("Dialog reply posted on comment %d", comment["id"])
+
+
+async def _apply_one(payload: dict) -> None:
+    comment = payload["comment"]
+    ctx = RepoCtx.from_payload(payload)
+    owner, repo = ctx.owner, ctx.repo
+    pr = payload["pull_request"]
+    pr_number: int = pr["number"]
+
+    token = await get_installation_token(ctx.installation_id)
+    await gh.add_reaction_to_review_comment(token, owner, repo, comment["id"], "eyes")
+
+    # The suggestion lives in the bot's original finding (the parent of this reply).
+    in_reply_to_id: int | None = comment.get("in_reply_to_id")
+    finding: dict | None = None
+    if in_reply_to_id:
+        try:
+            finding = await gh.get_review_comment(token, owner, repo, in_reply_to_id)
+        except Exception as e:
+            logger.warning("Could not fetch parent finding %s: %s", in_reply_to_id, e)
+
+    if not finding or not _is_bot(finding.get("user", {})):
+        await gh.reply_to_review_comment(
+            token, owner, repo, pr_number, comment["id"],
+            "Не нашёл исходное замечание. Ответьте командой `/apply` именно в треде моего комментария.",
+        )
+        return
+
+    head_owner, head_name, branch = head_target(pr, owner, repo)
+
+    tmp = None
+    try:
+        tmp = clone.clone_branch(token, head_owner, head_name, branch, depth=settings.clone_depth)
+        outcome = await fix_service.apply_finding(tmp, finding)
+        if not outcome.applied:
+            await gh.reply_to_review_comment(
+                token, owner, repo, pr_number, comment["id"],
+                f"⚠️ Не смог применить правку автоматически: {outcome.note}",
+            )
+            return
+        applier.push(tmp, branch)
+        logger.info("Applied fix on %s#%d commit=%s", repo, pr_number, outcome.sha)
+
+        note = f"\n\n{outcome.note}" if outcome.note else ""
+        if settings.delete_resolved_comments:
+            await gh.create_issue_comment(
+                token, owner, repo, pr_number,
+                f"✅ Применил правку к `{finding.get('path', '')}` — коммит `{outcome.sha}` "
+                f"в ветке `{branch}`. Замечание закрыто.{note}",
+            )
+            try:
+                await gh.delete_review_comment(token, owner, repo, finding["id"])
+            except Exception as e:
+                logger.warning("Could not delete resolved finding %s: %s", finding["id"], e)
+        else:
+            await gh.reply_to_review_comment(
+                token, owner, repo, pr_number, comment["id"],
+                f"✅ Применил правку и запушил коммит `{outcome.sha}` в ветку `{branch}`.{note}",
+            )
+    except Exception as e:
+        logger.warning("Apply failed: %s", e)
+        await gh.reply_to_review_comment(
+            token, owner, repo, pr_number, comment["id"],
+            f"❌ Ошибка при применении правки: {e}",
+        )
+    finally:
+        if tmp:
+            clone.cleanup(tmp)
+
+
+async def _apply_all(token: str, ctx: RepoCtx, pr_number: int) -> None:
+    owner, repo = ctx.owner, ctx.repo
+    comments = await gh.list_review_comments(token, owner, repo, pr_number)
+    findings = [
+        c for c in comments
+        if poster.FINDING_MARKER in c.get("body", "") and _is_bot(c.get("user", {}))
+    ]
+
+    if not findings:
+        await gh.create_issue_comment(
+            token, owner, repo, pr_number,
+            "Не нашёл своих замечаний для применения. Сначала запустите `/review`.",
+        )
+        return
+
+    pr = await gh.get_pull_request(token, owner, repo, pr_number)
+    head_owner, head_name, branch = head_target(pr, owner, repo)
+
+    applied: list[str] = []
+    skipped: list[str] = []
+    resolved_ids: list[int] = []
+    tmp = None
+    try:
+        tmp = clone.clone_branch(token, head_owner, head_name, branch, depth=settings.clone_depth)
+        for c in findings:
+            path = c.get("path", "")
+            try:
+                outcome = await fix_service.apply_finding(tmp, c)
+                if outcome.applied:
+                    applied.append(f"`{path}` → `{outcome.sha}`")
+                    resolved_ids.append(c["id"])
+                else:
+                    skipped.append(f"`{path}`: {outcome.note}")
+            except Exception as e:
+                skipped.append(f"`{path}`: {e}")
+
+        if applied:
+            applier.push(tmp, branch)
+    except Exception as e:
+        await gh.create_issue_comment(token, owner, repo, pr_number, f"❌ Ошибка при применении правок: {e}")
+        return
+    finally:
+        if tmp:
+            clone.cleanup(tmp)
+
+    if settings.delete_resolved_comments:
+        for cid in resolved_ids:
+            try:
+                await gh.delete_review_comment(token, owner, repo, cid)
+            except Exception as e:
+                logger.warning("Could not delete resolved finding %s: %s", cid, e)
+
+    body = f"🤖 **Применение правок** — применено {len(applied)} из {len(findings)}.\n\n"
+    if applied:
+        body += "**Закоммичено:**\n" + "\n".join(f"- {a}" for a in applied) + "\n\n"
+    if skipped:
+        body += "**Пропущено:**\n" + "\n".join(f"- {s}" for s in skipped) + "\n"
+    await gh.create_issue_comment(token, owner, repo, pr_number, body)
+    logger.info("apply-all done: %d applied, %d skipped", len(applied), len(skipped))

@@ -7,9 +7,33 @@ logger = logging.getLogger(__name__)
 
 _BOT_HEADER = "🤖 **AI Code Review**"
 
+# Hidden marker so the bot can recognise its own findings later (e.g. on /apply-all).
+FINDING_MARKER = "<!-- ai-review-finding -->"
+
 
 def _finding_body(f: Finding) -> str:
-    return f"**[{f.severity}] {f.title}**\n\n{f.body}"
+    body = f"**[{f.severity}] {f.title}**\n\n{f.body}"
+    if f.suggestion is not None and f.suggestion.strip() != "":
+        body += f"\n\n```suggestion\n{f.suggestion}\n```"
+    body += (
+        f"\n\n{FINDING_MARKER}\n"
+        f"<sub>Применить: кнопка «Commit suggestion» выше или ответьте в треде `/apply`.</sub>"
+    )
+    return body
+
+
+def _inline_comment(f: Finding) -> dict:
+    comment: dict = {
+        "path": f.path,
+        "line": f.line,
+        "side": "RIGHT",
+        "body": _finding_body(f),
+    }
+    # Multi-line suggestion: anchor the comment across the whole range.
+    if f.start_line is not None and f.start_line < f.line:
+        comment["start_line"] = f.start_line
+        comment["start_side"] = "RIGHT"
+    return comment
 
 
 async def post_review(
@@ -20,15 +44,7 @@ async def post_review(
     commit_id: str,
     result: ReviewResult,
 ) -> None:
-    inline_comments = [
-        {
-            "path": f.path,
-            "line": f.line,
-            "side": "RIGHT",
-            "body": _finding_body(f),
-        }
-        for f in result.findings
-    ]
+    inline_comments = [_inline_comment(f) for f in result.findings]
 
     leftover: list[Finding] = []
 
