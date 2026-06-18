@@ -1,0 +1,41 @@
+services:
+  app:
+    build: .
+    # хост використовує systemd-resolved (127.0.0.53), що недоступний у контейнері
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    env_file: .env
+    environment:
+      # ключ монтуємо в контейнер на стабільний шлях (див. volumes нижче)
+      GITHUB_PRIVATE_KEY_PATH: /secrets/private-key.pem
+    volumes:
+      # ${GITHUB_PRIVATE_KEY_PATH} читається з .env у цій же теці.
+      # Якщо ключ задано інлайн через GITHUB_PRIVATE_KEY, цей маунт можна прибрати
+      # разом із блоком environment вище.
+      - ${GITHUB_PRIVATE_KEY_PATH:-./private-key.pem}:/secrets/private-key.pem:ro
+    expose:
+      - "8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  tunnel:
+    image: ngrok/ngrok:latest
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    command: http app:8000 --log stdout
+    environment:
+      # безкоштовний токен: https://dashboard.ngrok.com/get-started/your-authtoken
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"  # локальний web-інспектор + API ngrok (для отримання URL)
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
