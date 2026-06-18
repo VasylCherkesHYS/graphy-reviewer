@@ -12,8 +12,7 @@ _token_cache: dict[int, tuple[str, float]] = {}
 def _make_app_jwt() -> str:
     now = int(time.time())
     payload = {"iat": now - 60, "exp": now + 540, "iss": settings.github_app_id}
-    private_key = settings.github_private_key.replace("\\n", "\n")
-    return jwt.encode(payload, private_key, algorithm="RS256")
+    return jwt.encode(payload, settings.private_key_pem, algorithm="RS256")
 
 
 async def get_installation_token(installation_id: int) -> str:
