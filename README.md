@@ -35,28 +35,70 @@ GitHub App, который ревьюит pull request'ы (OpenAI или Anthrop
 
 - `LLM_PROVIDER` — `openai` (по умолчанию) или `anthropic`.
 - `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_COMPLEX_MODEL`.
-- `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`.
+- `GITHUB_APP_ID`, `GITHUB_WEBHOOK_SECRET`.
+- **Приватный ключ GitHub App** — задайте *один* из двух способов:
+  - `GITHUB_PRIVATE_KEY` — PEM инлайн, переносы строк как `\n`;
+  - `GITHUB_PRIVATE_KEY_PATH` — путь к `.pem` файлу (**имеет приоритет**; для
+    docker-compose это путь на хосте, который монтируется в контейнер).
+- `NGROK_AUTHTOKEN` — нужен только для туннеля в docker-compose
+  ([бесплатный токен](https://dashboard.ngrok.com/get-started/your-authtoken)).
 - `AUTO_REVIEW_ON_REQUEST`, `AUTO_REVIEW_ON_OPEN`.
 - `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` — личность коммитов с правками.
 
-## Локальный запуск (быстрый старт для теста)
+## Локальный запуск
+
+Есть два способа: через **Docker Compose** (рекомендуется — сервер и ngrok-туннель
+одной командой) или **вручную** на хосте.
+
+### Вариант A — Docker Compose (рекомендуется)
+
+Нужны: Docker + Docker Compose, заполненный `.env`, токен `NGROK_AUTHTOKEN`.
+
+`docker-compose.yml` поднимает два сервиса:
+- `app` — собирается из `Dockerfile`, слушает порт `8000`, healthcheck по `/healthz`;
+- `tunnel` — ngrok, публикует `app:8000` наружу; стартует только после того, как
+  `app` стал healthy. Веб-инспектор: `http://localhost:4040`.
+
+**1. Заполнить `.env`** (см. раздел «Конфигурация»), в т.ч. `NGROK_AUTHTOKEN`.
+Если ключ задаёте файлом — пропишите путь к `.pem` на хосте:
+
+```bash
+echo 'GITHUB_PRIVATE_KEY_PATH=./reviewer-bot.private-key.pem' >> .env
+```
+
+> Примечание: при инлайн-ключе можно убрать из `docker-compose.yml` блоки
+> `environment: GITHUB_PRIVATE_KEY_PATH` и `volumes` у сервиса `app`.
+
+**2. Запустить:**
+
+```bash
+docker compose up --build
+```
+
+**3. Узнать публичный URL туннеля** — открыть `http://localhost:4040` (или
+`curl -s http://localhost:4040/api/tunnels`). Это адрес вида
+`https://<random>.ngrok-free.app`.
+
+**4. Прописать вебхук** (см. шаг 4 ниже), Payload URL = `<ngrok-url>/webhook`.
+
+### Вариант B — вручную на хосте
 
 Нужны: Python 3.12+, Node.js (для туннеля), заполненный `.env`.
 
 **1. Установить зависимости** (один раз):
 
-```powershell
+```bash
 # полный вариант (с code-review-graph для контекста графа)
 pip install -e .
 
 # или минимальный рантайм, если code-review-graph не ставится:
-pip install "fastapi>=0.115" "uvicorn[standard]>=0.30" "httpx>=0.27" `
+pip install "fastapi>=0.115" "uvicorn[standard]>=0.30" "httpx>=0.27" \
             "openai>=1.50" "anthropic>=0.40" "pyjwt[crypto]>=2.9" "pydantic-settings>=2.5"
 ```
 
 **2. Поднять сервер** (терминал №1, оставить открытым):
 
-```powershell
+```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -64,16 +106,18 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 **3. Поднять публичный туннель** (терминал №2, оставить открытым):
 
-```powershell
+```bash
 npx --yes localtunnel --port 8000 --subdomain graphy-reviewer-bot
 ```
 
 Выведет: `your url is: https://graphy-reviewer-bot.loca.lt`.
 Если этот subdomain занят — localtunnel выдаст случайный, тогда **обнови Webhook URL в GitHub**.
 
-**4. Прописать вебхук** в GitHub App → General → Webhook (один раз, если URL не менялся):
+### Общие шаги (для обоих вариантов)
 
-- **Payload URL:** `https://graphy-reviewer-bot.loca.lt/webhook`
+**4. Прописать вебхук** в GitHub App → General → Webhook:
+
+- **Payload URL:** `<публичный-url>/webhook` (loca.lt или ngrok — см. выше)
 - **Content type:** `application/json`
 - **Secret:** значение из `.env` → `GITHUB_WEBHOOK_SECRET`
 
