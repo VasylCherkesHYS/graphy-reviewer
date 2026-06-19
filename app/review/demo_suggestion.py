@@ -12,7 +12,9 @@ _SUGGESTION_RE = re.compile(r"
 def extract_suggestion(body):
     """Return the contents of a ```suggestion block."""
     match = _SUGGESTION_RE.search(body)
-    # BUG: no None check — raises AttributeError when there is no suggestion.
+    if not match:
+        return None
+    return match.group(1).strip()
     return match.group(1).strip()
 
 
