@@ -31,9 +31,9 @@ def extract_suggestion(body: str) -> str | None:
 def _safe_path(repo_dir: str, file_path: str) -> str:
     full = os.path.normpath(os.path.join(repo_dir, file_path))
     if not full.startswith(os.path.normpath(repo_dir)):
-        raise ApplyError(f"Путь вне репозитория: {file_path}")
+        raise ApplyError(f"Path outside the repository: {file_path}")
     if not os.path.isfile(full):
-        raise ApplyError(f"Файл не найден: {file_path}")
+        raise ApplyError(f"File not found: {file_path}")
     return full
 
 
@@ -60,7 +60,7 @@ def apply_suggestion(
 
     if start_line < 1 or end_line > len(lines) or start_line > end_line:
         raise ApplyError(
-            f"Строки {start_line}..{end_line} вне диапазона файла {file_path} ({len(lines)} строк)"
+            f"Lines {start_line}..{end_line} are out of range for file {file_path} ({len(lines)} lines)"
         )
 
     replacement = new_text.replace("\r\n", "\n").split("\n")
@@ -75,7 +75,7 @@ def apply_edits(repo_dir: str, file_path: str, edits: list[Edit]) -> None:
     Each edit's `old` must occur exactly once. Raises ApplyError otherwise.
     """
     if not edits:
-        raise ApplyError("Пустой список правок")
+        raise ApplyError("Empty list of edits")
     full = _safe_path(repo_dir, file_path)
 
     with open(full, "r", encoding="utf-8") as f:
@@ -85,11 +85,11 @@ def apply_edits(repo_dir: str, file_path: str, edits: list[Edit]) -> None:
         count = text.count(e.old)
         if count == 0:
             raise ApplyError(
-                f"Не найден фрагмент для замены в {file_path} (возможно, файл изменился)"
+                f"Couldn't find the fragment to replace in {file_path} (the file may have changed)"
             )
         if count > 1:
             raise ApplyError(
-                f"Фрагмент встречается {count} раз в {file_path} — замена неоднозначна"
+                f"The fragment occurs {count} times in {file_path} — the replacement is ambiguous"
             )
         text = text.replace(e.old, e.new, 1)
 
@@ -129,6 +129,6 @@ def push(repo_dir: str, branch: str) -> None:
     res = _run(["git", "push", "origin", f"HEAD:{branch}"], repo_dir, timeout=120)
     if res.returncode != 0:
         raise ApplyError(
-            f"git push не удался (ветка {branch}). "
-            f"Для PR из форка включите 'Allow edits by maintainers'. {res.stderr.strip()}"
+            f"git push failed (branch {branch}). "
+            f"For a PR from a fork, enable 'Allow edits by maintainers'. {res.stderr.strip()}"
         )

@@ -1,51 +1,51 @@
 REVIEW_GUIDELINES = """\
 # Review Guidelines (EpicStaff)
 
-Рубрика для AI-ревью pull request'ов. Это **единственный** источник правил для ревью.
+Rubric for AI review of pull requests. This is the **only** source of review rules.
 
-> ⚠️ Правила из корневого CLAUDE.md (backend-only, «фронтенд не трогаем», «не коммить»)
-> описывают интерактивную разработку, а НЕ ревью — на ревью они не распространяются.
-> Архитектурную часть CLAUDE.md (что за сервисы, как исполняется флоу, Redis/Postgres) использовать как контекст.
+> ⚠️ The rules in the root CLAUDE.md (backend-only, "don't touch the frontend", "don't commit")
+> describe interactive development, NOT review — they do not apply to review.
+> Use the architectural part of CLAUDE.md (what the services are, how the flow runs, Redis/Postgres) as context.
 
-## Скоуп ревью
-Ревьюй и фронтенд, и бэкенд — все изменённые файлы PR:
-- Backend — Django (tables), микросервисы crew, knowledge, manager, realtime, webhook, src/shared.
+## Review scope
+Review both frontend and backend — every changed file in the PR:
+- Backend — Django (tables), the crew, knowledge, manager, realtime, webhook microservices, src/shared.
 - Frontend — Angular 19 SPA (frontend/).
 
-## На что смотреть — Backend
-- Корректность и регрессии: логические ошибки, необработанные исключения, гонки.
-- Совместимость схемы БД: ту же Postgres читают crew/knowledge/manager/realtime. Любое изменение модели/миграции должно быть обратно совместимым.
-- Слои: бизнес-логика в services/, а не во вьюхах/сериализаторах/моделях.
-- Вендоренный код (src/crew/libraries/, src/knowledge/libraries/graphrag) не патчить — расширять через services/.
-- Redis-каналы: имена объявлять централизованно, не инлайнить.
-- Безопасность: инъекции, утечки секретов, отсутствие проверок прав (RBAC в tables/services/rbac/).
-- Миграции: сгенерированы через makemigrations, не написаны руками.
+## What to look for — Backend
+- Correctness and regressions: logic errors, unhandled exceptions, race conditions.
+- DB schema compatibility: the same Postgres is read by crew/knowledge/manager/realtime. Any model/migration change must be backward compatible.
+- Layering: business logic belongs in services/, not in views/serializers/models.
+- Vendored code (src/crew/libraries/, src/knowledge/libraries/graphrag) must not be patched — extend it via services/.
+- Redis channels: declare names centrally, do not inline them.
+- Security: injections, secret leaks, missing permission checks (RBAC in tables/services/rbac/).
+- Migrations: generated via makemigrations, not hand-written.
 
-## На что смотреть — Frontend (Angular 19)
-- Корректность: подписки RxJS без утечек (takeUntilDestroyed/async), отписки в ngOnDestroy.
-- Change detection: лишние ре-рендеры, корректность OnPush, мутации входных данных.
-- Типобезопасность: отсутствие any, корректные типы DTO под API.
-- Консистентность API: фронтовые DTO соответствуют изменениям бэкенд-схемы/сериализаторов.
+## What to look for — Frontend (Angular 19)
+- Correctness: RxJS subscriptions without leaks (takeUntilDestroyed/async), unsubscribe in ngOnDestroy.
+- Change detection: needless re-renders, OnPush correctness, mutation of input data.
+- Type safety: no any, correct DTO types for the API.
+- API consistency: frontend DTOs match backend schema/serializer changes.
 
-## Формат вывода
-- Инлайн-комментарии только там, где есть реальная проблема. Не комментируй стиль ради стиля.
-- У каждого замечания уровень: [critical] / [major] / [minor] / [nit].
-- Создавай ОТДЕЛЬНЫЙ finding на КАЖДУЮ проблему — не группируй.
-- line — номер строки в НОВОЙ версии файла (правая сторона диффа).
-- ВСЕГДА, когда у проблемы есть конкретное исправление, добавляй поле `suggestion` —
-  это ПОЛНЫЙ исправленный код РОВНО для тех строк, на которые указывает комментарий
-  (от `start_line` до `line` включительно). Если правка занимает несколько строк —
-  задай `start_line` (первая строка диапазона); если одна строка — `start_line` можно не указывать.
-  `suggestion` должен полностью заменять эти строки (без диффа, без ```), с правильными отступами.
-  Если конкретного безопасного исправления нет (нужен контекст вне этих строк) — оставь `suggestion` пустым/null.
-- В конце — отдельный итоговый summary для куратора на русском: что делает PR, ключевые изменения, риски, вердикт.
-- Язык комментариев — русский.
+## Output format
+- Inline comments only where there is a real problem. Do not comment on style for the sake of style.
+- Every finding carries a severity: [critical] / [major] / [minor] / [nit].
+- Create a SEPARATE finding for EACH problem — do not group them.
+- line — the line number in the NEW version of the file (the right side of the diff).
+- ALWAYS, when a problem has a concrete fix, add a `suggestion` field —
+  this is the FULL fixed code for EXACTLY the lines the comment points at
+  (from `start_line` through `line`, inclusive). If the fix spans several lines,
+  set `start_line` (the first line of the range); for a single line, `start_line` may be omitted.
+  `suggestion` must fully replace those lines (no diff, no ```), with correct indentation.
+  If there is no concrete safe fix (context outside those lines is needed) — leave `suggestion` empty/null.
+- At the end, provide a separate overall summary for the maintainer: what the PR does, key changes, risks, verdict.
+- Write comments in English.
 """
 
 REVIEW_SYSTEM = (
-    "Ты — AI code reviewer. Ты получаешь diff pull request'а и контекст графа зависимостей. "
-    "Следуй рубрике ревью строго. Возвращай ТОЛЬКО валидный JSON по заданной схеме — "
-    "findings[], summary, graph_used, graph_evidence. Никакого текста вне JSON."
+    "You are an AI code reviewer. You receive a pull request diff and dependency-graph context. "
+    "Follow the review rubric strictly. Return ONLY valid JSON matching the given schema — "
+    "findings[], summary, graph_used, graph_evidence. No text outside the JSON."
 )
 
 
@@ -56,9 +56,9 @@ def build_review_prompt(diff: str, graph_context: str, max_diff_chars: int) -> s
 
     return (
         f"{REVIEW_GUIDELINES}\n\n"
-        f"=== DIFF PR ===\n{truncated_diff}\n\n"
-        f"=== GRAPH CONTEXT (радиус поражения) ===\n{graph_context}\n\n"
-        "Верни СТРОГО JSON по схеме: findings[] "
+        f"=== PR DIFF ===\n{truncated_diff}\n\n"
+        f"=== GRAPH CONTEXT (blast radius) ===\n{graph_context}\n\n"
+        "Return STRICT JSON matching the schema: findings[] "
         "(path, line, severity, title, body, start_line?, suggestion?), "
         "summary, graph_used (bool), graph_evidence."
     )
@@ -71,36 +71,36 @@ def build_dialog_prompt(
     user_reply: str,
 ) -> str:
     return (
-        f"Ты оставил замечание к файлу `{file_path}`:\n\n"
+        f"You left a comment on the file `{file_path}`:\n\n"
         f"{original_comment}\n\n"
-        f"Контекст кода (diff hunk):\n```\n{diff_hunk}\n```\n\n"
-        f"Разработчик ответил:\n{user_reply}\n\n"
-        "Ответь по существу: если разработчик прав — признай, если нет — объясни конкретно почему. "
-        "Отвечай на русском, кратко и по делу."
+        f"Code context (diff hunk):\n```\n{diff_hunk}\n```\n\n"
+        f"The developer replied:\n{user_reply}\n\n"
+        "Respond on the merits: if the developer is right — acknowledge it; if not — explain concretely why. "
+        "Answer in English, briefly and to the point."
     )
 
 
 FIX_SYSTEM = (
-    "Ты — AI-инженер, который применяет ранее предложенную правку к одному файлу. "
-    "Ты получаешь полное содержимое файла и текст замечания. "
-    "Верни ТОЛЬКО валидный JSON по схеме: "
+    "You are an AI engineer applying a previously suggested fix to a single file. "
+    "You receive the full file contents and the text of the review comment. "
+    "Return ONLY valid JSON matching the schema: "
     '{"file": str, "edits": [{"old": str, "new": str}], "commit_message": str, '
     '"note": str, "applicable": bool}. '
-    "Правило для edits: 'old' — это ТОЧНАЯ подстрока из текущего файла (с учётом отступов и пробелов), "
-    "которая встречается в файле РОВНО один раз; 'new' — на что её заменить. "
-    "Делай минимальные правки, не переписывай файл целиком. "
-    "commit_message — короткое сообщение коммита на английском в стиле Conventional Commits. "
-    "Если правку нельзя применить безопасно (нужен контекст вне файла, неоднозначно и т.п.) — "
-    'верни "applicable": false, пустой edits и поясни причину в note (на русском). '
-    "Никакого текста вне JSON."
+    "Rule for edits: 'old' is an EXACT substring of the current file (matching indentation and whitespace) "
+    "that occurs in the file EXACTLY once; 'new' is what to replace it with. "
+    "Make minimal edits, do not rewrite the whole file. "
+    "commit_message — a short commit message in English, in Conventional Commits style. "
+    "If the fix cannot be applied safely (context outside the file is needed, it is ambiguous, etc.) — "
+    'return "applicable": false, an empty edits list, and explain the reason in note (in English). '
+    "No text outside the JSON."
 )
 
 
 def build_fix_prompt(file_path: str, file_content: str, finding_text: str) -> str:
     return (
-        f"Файл: `{file_path}`\n\n"
-        f"=== ЗАМЕЧАНИЕ РЕВЬЮЕРА ===\n{finding_text}\n\n"
-        f"=== ТЕКУЩЕЕ СОДЕРЖИМОЕ ФАЙЛА ===\n{file_content}\n\n"
-        "Сформируй edits, которые реализуют это замечание. "
-        "Помни: каждое 'old' должно точно и однозначно встречаться в файле."
+        f"File: `{file_path}`\n\n"
+        f"=== REVIEWER COMMENT ===\n{finding_text}\n\n"
+        f"=== CURRENT FILE CONTENTS ===\n{file_content}\n\n"
+        "Produce edits that implement this comment. "
+        "Remember: each 'old' must match the file exactly and unambiguously."
     )

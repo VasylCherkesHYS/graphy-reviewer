@@ -92,14 +92,14 @@ async def _run_review(
 # --------------------------------------------------------------------------- #
 
 _HELP_TEXT = (
-    "🤖 **AI Code Review — команды**\n\n"
-    "- `/review` — провести (или повторить) ревью PR.\n"
-    "- `/apply` — _ответом в треде конкретного замечания_: применить предложенную правку, "
-    "закоммитить и запушить в ветку PR (замечание после этого закрывается).\n"
-    "- `/apply-all` — применить все мои замечания (каждое — отдельным коммитом).\n"
-    "- `/cleanup` — удалить все мои комментарии в этом PR.\n"
-    "- Любой другой ответ в треде моего замечания — продолжение обсуждения.\n\n"
-    "💡 У замечаний с блоком _suggestion_ можно нажать **«Commit suggestion»** прямо в GitHub."
+    "🤖 **AI Code Review — commands**\n\n"
+    "- `/review` — run (or re-run) the PR review.\n"
+    "- `/apply` — _as a reply in the thread of a specific finding_: apply the suggested fix, "
+    "commit it, and push to the PR branch (the finding is closed afterwards).\n"
+    "- `/apply-all` — apply all of my findings (each as a separate commit).\n"
+    "- `/cleanup` — delete all of my comments in this PR.\n"
+    "- Any other reply in the thread of my finding — continues the discussion.\n\n"
+    "💡 For findings with a _suggestion_ block you can click **\"Commit suggestion\"** right in GitHub."
 )
 
 
@@ -168,7 +168,7 @@ async def _cleanup(token: str, ctx: RepoCtx, pr_number: int) -> None:
     except Exception as e:
         logger.warning("cleanup failed: %s", e)
 
-    await gh.create_issue_comment(token, owner, repo, pr_number, f"🧹 Удалил {deleted} своих комментариев.")
+    await gh.create_issue_comment(token, owner, repo, pr_number, f"🧹 Deleted {deleted} of my comments.")
     logger.info("cleanup done: deleted %d comments on %s#%d", deleted, repo, pr_number)
 
 
@@ -236,7 +236,7 @@ async def _apply_one(payload: dict) -> None:
     if not finding or not _is_bot(finding.get("user", {})):
         await gh.reply_to_review_comment(
             token, owner, repo, pr_number, comment["id"],
-            "Не нашёл исходное замечание. Ответьте командой `/apply` именно в треде моего комментария.",
+            "Couldn't find the original finding. Reply with `/apply` in the thread of my comment.",
         )
         return
 
@@ -249,7 +249,7 @@ async def _apply_one(payload: dict) -> None:
         if not outcome.applied:
             await gh.reply_to_review_comment(
                 token, owner, repo, pr_number, comment["id"],
-                f"⚠️ Не смог применить правку автоматически: {outcome.note}",
+                f"⚠️ Couldn't apply the fix automatically: {outcome.note}",
             )
             return
         applier.push(tmp, branch)
@@ -259,8 +259,8 @@ async def _apply_one(payload: dict) -> None:
         if settings.delete_resolved_comments:
             await gh.create_issue_comment(
                 token, owner, repo, pr_number,
-                f"✅ Применил правку к `{finding.get('path', '')}` — коммит `{outcome.sha}` "
-                f"в ветке `{branch}`. Замечание закрыто.{note}",
+                f"✅ Applied the fix to `{finding.get('path', '')}` — commit `{outcome.sha}` "
+                f"on branch `{branch}`. Finding closed.{note}",
             )
             try:
                 await gh.delete_review_comment(token, owner, repo, finding["id"])
@@ -269,13 +269,13 @@ async def _apply_one(payload: dict) -> None:
         else:
             await gh.reply_to_review_comment(
                 token, owner, repo, pr_number, comment["id"],
-                f"✅ Применил правку и запушил коммит `{outcome.sha}` в ветку `{branch}`.{note}",
+                f"✅ Applied the fix and pushed commit `{outcome.sha}` to branch `{branch}`.{note}",
             )
     except Exception as e:
         logger.warning("Apply failed: %s", e)
         await gh.reply_to_review_comment(
             token, owner, repo, pr_number, comment["id"],
-            f"❌ Ошибка при применении правки: {e}",
+            f"❌ Error while applying the fix: {e}",
         )
     finally:
         if tmp:
@@ -293,7 +293,7 @@ async def _apply_all(token: str, ctx: RepoCtx, pr_number: int) -> None:
     if not findings:
         await gh.create_issue_comment(
             token, owner, repo, pr_number,
-            "Не нашёл своих замечаний для применения. Сначала запустите `/review`.",
+            "Couldn't find any of my findings to apply. Run `/review` first.",
         )
         return
 
@@ -321,7 +321,7 @@ async def _apply_all(token: str, ctx: RepoCtx, pr_number: int) -> None:
         if applied:
             applier.push(tmp, branch)
     except Exception as e:
-        await gh.create_issue_comment(token, owner, repo, pr_number, f"❌ Ошибка при применении правок: {e}")
+        await gh.create_issue_comment(token, owner, repo, pr_number, f"❌ Error while applying the fixes: {e}")
         return
     finally:
         if tmp:
@@ -334,10 +334,10 @@ async def _apply_all(token: str, ctx: RepoCtx, pr_number: int) -> None:
             except Exception as e:
                 logger.warning("Could not delete resolved finding %s: %s", cid, e)
 
-    body = f"🤖 **Применение правок** — применено {len(applied)} из {len(findings)}.\n\n"
+    body = f"🤖 **Applying fixes** — applied {len(applied)} of {len(findings)}.\n\n"
     if applied:
-        body += "**Закоммичено:**\n" + "\n".join(f"- {a}" for a in applied) + "\n\n"
+        body += "**Committed:**\n" + "\n".join(f"- {a}" for a in applied) + "\n\n"
     if skipped:
-        body += "**Пропущено:**\n" + "\n".join(f"- {s}" for s in skipped) + "\n"
+        body += "**Skipped:**\n" + "\n".join(f"- {s}" for s in skipped) + "\n"
     await gh.create_issue_comment(token, owner, repo, pr_number, body)
     logger.info("apply-all done: %d applied, %d skipped", len(applied), len(skipped))

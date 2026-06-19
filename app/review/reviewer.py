@@ -54,7 +54,7 @@ async def reply_to_comment(
 ) -> str:
     prompt = build_dialog_prompt(original_comment, diff_hunk, file_path, user_reply)
     return await provider.complete(
-        "Ты — AI code reviewer, ведёшь диалог в треде PR на GitHub.",
+        "You are an AI code reviewer holding a discussion in a PR thread on GitHub.",
         prompt,
         max_tokens=4000,
         large=True,

@@ -1,0 +1,41 @@
+services:
+  app:
+    build: .
+    # the host uses systemd-resolved (127.0.0.53), which is unreachable from the container
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    env_file: .env
+    environment:
+      # mount the key into the container at a stable path (see volumes below)
+      GITHUB_PRIVATE_KEY_PATH: /secrets/private-key.pem
+    volumes:
+      # ${GITHUB_PRIVATE_KEY_PATH} is read from the .env file in this directory.
+      # If the key is provided inline via GITHUB_PRIVATE_KEY, this mount can be removed
+      # together with the environment block above.
+      - ${GITHUB_PRIVATE_KEY_PATH:-./private-key.pem}:/secrets/private-key.pem:ro
+    expose:
+      - "8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  tunnel:
+    image: ngrok/ngrok:latest
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    command: http app:8000 --log stdout
+    environment:
+      # free token: https://dashboard.ngrok.com/get-started/your-authtoken
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"  # local web inspector + ngrok API (to obtain the URL)
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped

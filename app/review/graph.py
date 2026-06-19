@@ -5,7 +5,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-FALLBACK = "(граф коду недоступний — аналізуй тільки diff)"
+FALLBACK = "(code graph unavailable — analyze the diff only)"
 
 
 def ensure_graph(repo_dir: str) -> bool:

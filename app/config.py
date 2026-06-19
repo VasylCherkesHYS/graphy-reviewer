@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Literal
 
 from pydantic import model_validator
@@ -9,7 +10,8 @@ class Settings(BaseSettings):
 
     # GitHub App
     github_app_id: str
-    github_private_key: str  # PEM contents, newlines as \n
+    github_private_key: str = ""  # PEM contents inline, newlines as \n
+    github_private_key_path: str = ""  # path to a PEM file (takes precedence)
     github_webhook_secret: str
 
     # LLM provider selection
@@ -27,8 +29,10 @@ class Settings(BaseSettings):
 
     # Behaviour
     auto_review_on_request: bool = True  # review when bot is added as a reviewer
-    auto_review_on_open: bool = False    # review automatically on PR open/sync
-    delete_resolved_comments: bool = True  # delete a finding's comment once its fix is applied
+    auto_review_on_open: bool = True  # review automatically on PR open/sync
+    delete_resolved_comments: bool = (
+        True  # delete a finding's comment once its fix is applied
+    )
     max_diff_chars: int = 120_000
     graph_timeout: int = 120  # seconds
     clone_depth: int = 100
@@ -37,13 +41,33 @@ class Settings(BaseSettings):
     git_author_name: str = "reviewer-bot-agent[bot]"
     git_author_email: str = "reviewer-bot-agent[bot]@users.noreply.github.com"
 
+    # Observability
+    log_level: str = "INFO"  # root log level (DEBUG/INFO/WARNING/ERROR)
+    observability_token: str = ""  # if set, /stats /events /logs /dashboard require it
+    #                                  (via ?token=... or X-Observability-Token header)
+
     @model_validator(mode="after")
     def _check_provider_key(self) -> "Settings":
         if self.llm_provider == "openai" and not self.openai_api_key:
             raise ValueError("LLM_PROVIDER=openai requires OPENAI_API_KEY")
         if self.llm_provider == "anthropic" and not self.anthropic_api_key:
             raise ValueError("LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY")
+        if not self.github_private_key and not self.github_private_key_path:
+            raise ValueError(
+                "Set either GITHUB_PRIVATE_KEY (inline PEM) or GITHUB_PRIVATE_KEY_PATH (PEM file)"
+            )
         return self
+
+    @property
+    def private_key_pem(self) -> str:
+        """PEM contents of the GitHub App private key.
+
+        Reads from GITHUB_PRIVATE_KEY_PATH if set (file takes precedence),
+        otherwise uses the inline GITHUB_PRIVATE_KEY (with escaped newlines).
+        """
+        if self.github_private_key_path:
+            return Path(self.github_private_key_path).read_text(encoding="utf-8")
+        return self.github_private_key.replace("\\n", "\n")
 
 
 settings = Settings()

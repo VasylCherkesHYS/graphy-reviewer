@@ -17,7 +17,7 @@ def _finding_body(f: Finding) -> str:
         body += f"\n\n```suggestion\n{f.suggestion}\n```"
     body += (
         f"\n\n{FINDING_MARKER}\n"
-        f"<sub>Применить: кнопка «Commit suggestion» выше или ответьте в треде `/apply`.</sub>"
+        f"<sub>To apply: the \"Commit suggestion\" button above, or reply `/apply` in this thread.</sub>"
     )
     return body
 
@@ -69,21 +69,21 @@ async def post_review(
     # Summary comment for the curator
     graph_line = ""
     if result.graph_used:
-        graph_line = f"\n\n**Граф знаний:** {result.graph_evidence}"
+        graph_line = f"\n\n**Knowledge graph:** {result.graph_evidence}"
     elif result.graph_evidence:
-        graph_line = f"\n\n**Граф:** {result.graph_evidence}"
+        graph_line = f"\n\n**Graph:** {result.graph_evidence}"
 
     inline_count = len(result.findings) - len(leftover)
     summary_body = (
         f"{_BOT_HEADER}\n\n"
-        f"**Найдено замечаний:** {len(result.findings)} "
-        f"(инлайн: {inline_count})"
+        f"**Findings:** {len(result.findings)} "
+        f"(inline: {inline_count})"
         f"{graph_line}\n\n"
-        f"## Итог для куратора\n{result.summary}"
+        f"## Summary for the maintainer\n{result.summary}"
     )
 
     if leftover:
-        summary_body += "\n\n## Замечания вне диффа (инлайн не прошёл)\n"
+        summary_body += "\n\n## Findings outside the diff (inline posting failed)\n"
         for f in leftover:
             summary_body += f"- **[{f.severity}]** `{f.path}:{f.line}` — {f.title}: {f.body}\n"
 
