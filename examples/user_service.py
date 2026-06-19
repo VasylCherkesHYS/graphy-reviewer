@@ -4,7 +4,9 @@ import sqlite3
 
 # Hardcoded secret — should be flagged (security).
 API_TOKEN = "sk-live-1234567890abcdef"
+import os
 
+API_TOKEN = os.environ.get("API_TOKEN")
 
 def get_user(db_path, user_id):
     # SQL injection: user_id interpolated straight into the query.
