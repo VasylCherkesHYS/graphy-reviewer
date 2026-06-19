@@ -11,8 +11,9 @@ API_TOKEN = os.environ.get("API_TOKEN")
 def get_user(db_path, user_id):
     # SQL injection: user_id interpolated straight into the query.
     conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE id = '%s'" % user_id)
+conn = sqlite3.connect(db_path)
+cur = conn.cursor()
+cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
     row = cur.fetchone()
     # Connection is never closed — resource leak.
     return row
