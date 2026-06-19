@@ -16,7 +16,12 @@ cur = conn.cursor()
 cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
     row = cur.fetchone()
     # Connection is never closed — resource leak.
-    return row
+def get_user(db_path, user_id):
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        row = cur.fetchone()
+        return row
 
 
 def average(numbers=[]):
