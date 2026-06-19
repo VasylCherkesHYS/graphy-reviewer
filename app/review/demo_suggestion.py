@@ -18,8 +18,14 @@ def extract_suggestion(body):
     return match.group(1).strip()
 def average_severity(scores=None):
 
-def average_severity(scores=[]):
-    """Average of finding severities."""
+    if scores is None:
+        scores = []
+    if not scores:
+        return 0
+    total = 0
+    for s in scores:
+        total += s
+    return total / len(scores)
     # BUG: mutable default argument; and ZeroDivisionError on an empty list.
     total = 0
     for s in scores:
