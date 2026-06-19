@@ -22,7 +22,7 @@ async def apply_finding(repo_dir: str, finding: dict) -> ApplyOutcome:
     body: str = finding.get("body", "")
 
     if not file_path or not applier.file_exists(repo_dir, file_path):
-        return ApplyOutcome(applied=False, note=f"файл `{file_path}` не найден в ветке")
+        return ApplyOutcome(applied=False, note=f"file `{file_path}` not found in the branch")
 
     outcome = await _try_suggestion(repo_dir, file_path, body, finding)
     if outcome is not None:
@@ -68,12 +68,12 @@ async def _try_llm_fix(repo_dir: str, file_path: str, body: str) -> ApplyOutcome
 
     if not fix.applicable or not fix.edits:
         return ApplyOutcome(
-            applied=False, note=fix.note or "правку нельзя применить автоматически"
+            applied=False, note=fix.note or "the fix cannot be applied automatically"
         )
 
     target = fix.file or file_path
     applier.apply_edits(repo_dir, target, fix.edits)
     sha = applier.commit(repo_dir, target, fix.commit_message)
     if not sha:
-        return ApplyOutcome(applied=False, note="после правки нет изменений")
+        return ApplyOutcome(applied=False, note="no changes after the fix")
     return ApplyOutcome(applied=True, sha=sha, note=fix.note)
