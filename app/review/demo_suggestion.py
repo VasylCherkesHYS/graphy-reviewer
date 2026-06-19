@@ -16,7 +16,7 @@ def extract_suggestion(body):
         return None
     return match.group(1).strip()
     return match.group(1).strip()
-
+def average_severity(scores=None):
 
 def average_severity(scores=[]):
     """Average of finding severities."""
