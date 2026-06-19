@@ -6,7 +6,7 @@ helper in applier.py — intentionally contains a couple of issues for the bot.)
 import re
 
 # BUG: not DOTALL, so multi-line suggestions are missed; also greedy `.*`.
-_SUGGESTION_RE = re.compile(r"```suggestion(.*)```")
+_SUGGESTION_RE = re.compile(r"
 
 
 def extract_suggestion(body):
