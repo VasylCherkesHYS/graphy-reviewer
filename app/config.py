@@ -39,6 +39,22 @@ class Settings(BaseSettings):
     graph_timeout: int = 120  # seconds
     clone_depth: int = 100
 
+    # Semantic context (vector embeddings) — uses the OpenAI embeddings API,
+    # reusing OPENAI_API_KEY. The OpenAI provider is urllib-based, so the heavy
+    # code-review-graph[embeddings] extra (torch) is NOT required.
+    enable_semantic_context: bool = True
+    openai_embedding_model: str = "text-embedding-3-small"
+    openai_embedding_base_url: str = "https://api.openai.com/v1"
+    semantic_top_k: int = 10  # related nodes pulled into the prompt
+    max_related_chars: int = 8_000  # cap on the rendered related-code block
+    embed_timeout: int = 300  # seconds for the embed step
+    max_embed_nodes: int = 6_000  # skip embedding above this node count (cost guard)
+
+    # Persistent code graph: rebuilt on push to the default branch and stored in
+    # an orphan service branch of the repo, then reused (incrementally) on PRs.
+    refresh_graph_on_push: bool = True
+    graph_cache_branch: str = "crg-cache"
+
     # Git identity used when the bot commits applied fixes
     git_author_name: str = "reviewer-bot-agent[bot]"
     git_author_email: str = "reviewer-bot-agent[bot]@users.noreply.github.com"

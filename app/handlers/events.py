@@ -1,17 +1,30 @@
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
 from app.config import settings
 from app.github import client as gh
 from app.github.auth import get_installation_token
-from app.github.payload import RepoCtx, head_target
-from app.review import applier, clone, fix_service, graph, poster, reviewer
+from app.github.payload import PushCtx, RepoCtx, head_target
+from app.review import applier, clone, fix_service, graph, graph_cache, poster, reviewer
 
 logger = logging.getLogger(__name__)
 
 # Simple in-memory dedup: last 500 delivery IDs
 _seen_deliveries: set[str] = set()
 _seen_order: list[str] = []
+
+# Per-repo locks serialize graph rebuilds (rapid pushes run sequentially).
+_refresh_locks: dict[str, asyncio.Lock] = {}
+
+
+def _refresh_lock(owner: str, repo: str) -> asyncio.Lock:
+    key = f"{owner}/{repo}"
+    lock = _refresh_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _refresh_locks[key] = lock
+    return lock
 
 
 def _is_duplicate(delivery_id: str) -> bool:
@@ -50,6 +63,53 @@ async def handle_event(event: str, payload: dict, delivery_id: str) -> None:
         if payload.get("action") == "created":
             await _handle_review_comment(payload)
 
+    elif event == "push":
+        await _handle_push(payload)
+
+
+# --------------------------------------------------------------------------- #
+# Graph refresh on push to the default branch
+# --------------------------------------------------------------------------- #
+
+async def _handle_push(payload: dict) -> None:
+    if not settings.refresh_graph_on_push:
+        return
+    ctx = PushCtx.from_payload(payload)
+    if ctx.deleted or not ctx.is_default_branch:
+        return
+    if ctx.sender_is_bot:
+        logger.info("Push by bot on %s/%s — skipping graph refresh", ctx.owner, ctx.repo)
+        return
+    await _refresh_graph(ctx)
+
+
+async def _refresh_graph(ctx: PushCtx) -> None:
+    """Rebuild the graph (+ embeddings) from the default branch and cache it.
+
+    Best-effort: any failure is logged and never surfaces to users. Serialized
+    per repo so concurrent pushes don't rebuild on top of each other.
+    """
+    async with _refresh_lock(ctx.owner, ctx.repo):
+        logger.info("Graph refresh started: %s/%s @ %s", ctx.owner, ctx.repo, ctx.after[:7])
+        token = await get_installation_token(ctx.installation_id)
+        tmp = None
+        try:
+            ref = f"refs/heads/{ctx.default_branch}"
+            tmp = clone.clone_repo(token, ctx.owner, ctx.repo, ref, ctx.after, depth=settings.clone_depth)
+            # Seed from the previous cache so `update` + `embed` stay incremental.
+            graph_cache.restore_from_cache(tmp, token, ctx.owner, ctx.repo, settings.graph_cache_branch)
+            if not graph.ensure_graph(tmp):
+                logger.warning("Graph refresh: build/update failed, aborting")
+                return
+            graph.build_embeddings(tmp)
+            if graph_cache.save_to_cache(tmp, token, ctx.owner, ctx.repo, settings.graph_cache_branch):
+                logger.info("Graph refresh done: %s/%s", ctx.owner, ctx.repo)
+        except Exception as e:
+            logger.warning("Graph refresh failed: %s", e)
+        finally:
+            if tmp:
+                clone.cleanup(tmp)
+
 
 # --------------------------------------------------------------------------- #
 # Review
@@ -71,18 +131,25 @@ async def _run_review(
 
     tmp = None
     graph_context = graph.FALLBACK
+    semantic_context = graph.FALLBACK_SEMANTIC
     try:
         ref = f"refs/pull/{pr_number}/head"
         tmp = clone.clone_repo(token, owner, repo, ref, base_sha, depth=settings.clone_depth)
+        # Reuse the persistent graph from the cache branch; `ensure_graph` then
+        # incrementally updates it with the PR's changed files (or builds from
+        # scratch on a cache miss).
+        graph_cache.restore_from_cache(tmp, token, owner, repo, settings.graph_cache_branch)
         if graph.ensure_graph(tmp):
+            graph.build_embeddings(tmp)
             graph_context = graph.detect_changes(tmp, base_sha)
+            semantic_context = graph.semantic_context(tmp, diff)
     except Exception as e:
         logger.warning("Graph step failed: %s", e)
     finally:
         if tmp:
             clone.cleanup(tmp)
 
-    result = await reviewer.review_pr(diff, graph_context)
+    result = await reviewer.review_pr(diff, graph_context, semantic_context)
     await poster.post_review(token, owner, repo, pr_number, head_sha, result)
     logger.info("PR review done: %s/%s#%d findings=%d", owner, repo, pr_number, len(result.findings))
 

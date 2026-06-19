@@ -146,4 +146,7 @@ def summarize_payload(event: str, payload: dict) -> tuple[str | None, str | None
         pr = payload["pull_request"].get("number")
     elif "issue" in payload and isinstance(payload["issue"], dict):
         pr = payload["issue"].get("number")
+    elif event == "push" and payload.get("ref"):
+        # No action field on push events; surface the ref instead.
+        action = f"push {payload['ref']}"
     return action, repo, pr

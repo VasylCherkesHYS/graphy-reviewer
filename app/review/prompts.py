@@ -49,15 +49,31 @@ REVIEW_SYSTEM = (
 )
 
 
-def build_review_prompt(diff: str, graph_context: str, max_diff_chars: int) -> str:
+def build_review_prompt(
+    diff: str,
+    graph_context: str,
+    semantic_context: str,
+    max_diff_chars: int,
+) -> str:
     truncated_diff = diff[:max_diff_chars]
     if len(diff) > max_diff_chars:
         truncated_diff += f"\n\n... [diff truncated at {max_diff_chars} chars]"
+
+    semantic_section = ""
+    if semantic_context:
+        semantic_section = (
+            "=== SEMANTICALLY RELATED CODE (vector search) ===\n"
+            "Existing code elsewhere in the repo that is related to this change. "
+            "Use it to spot inconsistencies, missed call sites, and patterns the "
+            "diff should follow — but only flag issues you can tie to the diff.\n"
+            f"{semantic_context}\n\n"
+        )
 
     return (
         f"{REVIEW_GUIDELINES}\n\n"
         f"=== PR DIFF ===\n{truncated_diff}\n\n"
         f"=== GRAPH CONTEXT (blast radius) ===\n{graph_context}\n\n"
+        f"{semantic_section}"
         "Return STRICT JSON matching the schema: findings[] "
         "(path, line, severity, title, body, start_line?, suggestion?), "
         "summary, graph_used (bool), graph_evidence."

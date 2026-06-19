@@ -28,9 +28,9 @@ def _parse_json(raw: str) -> dict:
     return json.loads(raw)
 
 
-async def review_pr(diff: str, graph_context: str) -> ReviewResult:
+async def review_pr(diff: str, graph_context: str, semantic_context: str = "") -> ReviewResult:
     large = len(diff) > _LARGE_DIFF_THRESHOLD
-    prompt = build_review_prompt(diff, graph_context, settings.max_diff_chars)
+    prompt = build_review_prompt(diff, graph_context, semantic_context, settings.max_diff_chars)
 
     logger.info(
         "Running PR review provider=%s large=%s diff_len=%d",
