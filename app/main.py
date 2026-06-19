@@ -23,6 +23,7 @@ SUPPORTED_EVENTS = {
     "pull_request",
     "pull_request_review_comment",
     "issue_comment",
+    "push",
     "ping",
 }
 

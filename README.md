@@ -7,7 +7,13 @@ fixes itself**, commits them, and pushes to the PR branch.
 ## Features
 
 - **PR review** — inline comments on changed lines + an overall summary.
-  Uses the dependency graph (`code-review-graph`) as "blast radius" context.
+  Uses the dependency graph (`code-review-graph`) as "blast radius" context, plus
+  **semantic vector search** that pulls related code from elsewhere in the repo
+  into the prompt.
+- **Persistent code graph** — the graph (with embeddings) is rebuilt only on a
+  push to the default branch and cached in a service branch (`crg-cache`); PR
+  reviews restore it and update only the changed files, so they don't rebuild
+  from scratch. See "Code graph & semantic context" below.
 - **Review triggers:**
   - the bot is requested as a PR reviewer (`review_requested`) — `AUTO_REVIEW_ON_REQUEST=true`;
   - the `/review` command in a PR comment;
@@ -48,6 +54,44 @@ Copy `.env.example` → `.env` and fill it in. Key variables:
 - `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` — the identity used for fix commits.
 - `LOG_LEVEL` — `DEBUG` / `INFO` (default) / `WARNING` / `ERROR`.
 - `OBSERVABILITY_TOKEN` — if set, the monitoring endpoints below require it.
+
+## Code graph & semantic context
+
+The bot keeps a `code-review-graph` knowledge graph (stored as a single SQLite
+`graph.db`, embeddings included) **per repository**, and uses it two ways:
+
+- **Blast radius** — `detect-changes` maps the diff to affected symbols/flows.
+- **Semantic context** — vector search finds code elsewhere in the repo that is
+  related to the diff and feeds it into the review prompt. Embeddings use the
+  **OpenAI** embeddings API and reuse `OPENAI_API_KEY` — no extra key, and no
+  heavy local model (the OpenAI provider is `urllib`-based, so the
+  `code-review-graph[embeddings]` extra is not required).
+
+**How storage works.** On every **push to the default branch** the bot rebuilds
+the graph from `main` and force-pushes the updated `graph.db` to a single-commit
+service branch (`GRAPH_CACHE_BRANCH`, default `crg-cache`) — `main` and its
+history stay clean. On a **PR review** it restores that `graph.db`, runs an
+incremental `update` (re-parsing/re-embedding only the PR's changed files), then
+runs blast-radius + semantic search. This keeps PR reviews cheap; the expensive
+full embed happens once per merge.
+
+Relevant settings (see `.env.example`): `REFRESH_GRAPH_ON_PUSH`,
+`GRAPH_CACHE_BRANCH`, `ENABLE_SEMANTIC_CONTEXT`, `OPENAI_EMBEDDING_MODEL`,
+`SEMANTIC_TOP_K`, `MAX_RELATED_CHARS`, `MAX_EMBED_NODES` (cost guard — skips
+embeddings for graphs larger than this).
+
+Everything degrades gracefully: if the cache is missing, the package isn't
+installed, or embeddings fail, the review still runs on the diff (+ graph) alone.
+
+**Priming the cache (optional).** Once the bot is installed, the first push to
+the default branch builds the cache automatically. To prime it ahead of time
+from a local checkout:
+
+```bash
+pip install -e .                 # needs code-review-graph
+export OPENAI_API_KEY=sk-...
+python -m scripts.bootstrap_graph .   # builds graph+embeddings, pushes to crg-cache
+```
 
 ## Monitoring & logs
 
@@ -167,4 +211,5 @@ timeout = server/tunnel unreachable).
 See the setup section (permissions, events, how to add the bot as a reviewer).
 In short — permissions: **Contents: Read & Write**, **Pull requests: Read & Write**,
 **Metadata: Read**; events: **Pull request**, **Issue comment**,
-**Pull request review comment**.
+**Pull request review comment**, **Push** (the last one drives the persistent
+graph rebuild on merges to the default branch).
