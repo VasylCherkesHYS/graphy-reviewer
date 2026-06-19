@@ -1,18 +1,18 @@
 services:
   app:
     build: .
-    # хост використовує systemd-resolved (127.0.0.53), що недоступний у контейнері
+    # the host uses systemd-resolved (127.0.0.53), which is unreachable from the container
     dns:
       - 8.8.8.8
       - 1.1.1.1
     env_file: .env
     environment:
-      # ключ монтуємо в контейнер на стабільний шлях (див. volumes нижче)
+      # mount the key into the container at a stable path (see volumes below)
       GITHUB_PRIVATE_KEY_PATH: /secrets/private-key.pem
     volumes:
-      # ${GITHUB_PRIVATE_KEY_PATH} читається з .env у цій же теці.
-      # Якщо ключ задано інлайн через GITHUB_PRIVATE_KEY, цей маунт можна прибрати
-      # разом із блоком environment вище.
+      # ${GITHUB_PRIVATE_KEY_PATH} is read from the .env file in this directory.
+      # If the key is provided inline via GITHUB_PRIVATE_KEY, this mount can be removed
+      # together with the environment block above.
       - ${GITHUB_PRIVATE_KEY_PATH:-./private-key.pem}:/secrets/private-key.pem:ro
     expose:
       - "8000"
@@ -31,10 +31,10 @@ services:
       - 1.1.1.1
     command: http app:8000 --log stdout
     environment:
-      # безкоштовний токен: https://dashboard.ngrok.com/get-started/your-authtoken
+      # free token: https://dashboard.ngrok.com/get-started/your-authtoken
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
     ports:
-      - "4040:4040"  # локальний web-інспектор + API ngrok (для отримання URL)
+      - "4040:4040"  # local web inspector + ngrok API (to obtain the URL)
     depends_on:
       app:
         condition: service_healthy

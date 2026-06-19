@@ -29,8 +29,10 @@ class Settings(BaseSettings):
 
     # Behaviour
     auto_review_on_request: bool = True  # review when bot is added as a reviewer
-    auto_review_on_open: bool = False    # review automatically on PR open/sync
-    delete_resolved_comments: bool = True  # delete a finding's comment once its fix is applied
+    auto_review_on_open: bool = True  # review automatically on PR open/sync
+    delete_resolved_comments: bool = (
+        True  # delete a finding's comment once its fix is applied
+    )
     max_diff_chars: int = 120_000
     graph_timeout: int = 120  # seconds
     clone_depth: int = 100
@@ -38,6 +40,11 @@ class Settings(BaseSettings):
     # Git identity used when the bot commits applied fixes
     git_author_name: str = "reviewer-bot-agent[bot]"
     git_author_email: str = "reviewer-bot-agent[bot]@users.noreply.github.com"
+
+    # Observability
+    log_level: str = "INFO"  # root log level (DEBUG/INFO/WARNING/ERROR)
+    observability_token: str = ""  # if set, /stats /events /logs /dashboard require it
+    #                                  (via ?token=... or X-Observability-Token header)
 
     @model_validator(mode="after")
     def _check_provider_key(self) -> "Settings":

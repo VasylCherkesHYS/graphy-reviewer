@@ -46,6 +46,35 @@ Copy `.env.example` → `.env` and fill it in. Key variables:
   ([free token](https://dashboard.ngrok.com/get-started/your-authtoken)).
 - `AUTO_REVIEW_ON_REQUEST`, `AUTO_REVIEW_ON_OPEN`, `AUTO_REVIEW_ON_SYNC`.
 - `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` — the identity used for fix commits.
+- `LOG_LEVEL` — `DEBUG` / `INFO` (default) / `WARNING` / `ERROR`.
+- `OBSERVABILITY_TOKEN` — if set, the monitoring endpoints below require it.
+
+## Monitoring & logs
+
+The app tracks every webhook delivery in memory (reset on restart) and keeps the
+most recent log lines, so you can see what's happening without SSHing into the host:
+
+| Endpoint     | What it returns                                                        |
+|--------------|------------------------------------------------------------------------|
+| `/healthz`   | liveness + uptime + counters (`received` / `ok` / `error` / `skipped`) |
+| `/stats`     | the same counters plus the last error                                  |
+| `/events`    | recent deliveries (event, action, repo, PR, status, duration, error)   |
+| `/logs`      | recent log lines                                                       |
+| `/dashboard` | an HTML page combining all of the above, auto-refreshing every 5s      |
+
+Query params: `/events?limit=50&status=error`, `/logs?limit=100&level=ERROR`.
+
+If `OBSERVABILITY_TOKEN` is set, pass it as `?token=...` or the
+`X-Observability-Token` header on `/stats`, `/events`, `/logs`, `/dashboard`
+(`/healthz` and `/webhook` are never gated). Set the token whenever the app is
+reachable publicly — the logs and event list may contain repo and PR identifiers.
+
+```bash
+curl http://localhost:8000/stats
+curl "http://localhost:8000/events?status=error&token=$OBSERVABILITY_TOKEN"
+# open the dashboard in a browser:
+#   http://localhost:8000/dashboard?token=...
+```
 
 ## Running locally
 
